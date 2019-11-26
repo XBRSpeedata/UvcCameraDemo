@@ -169,7 +169,7 @@ int UVCCamera::connect(int vid, int pid, int fd, int busnum, int devaddr, const 
 				mPreview = new UVCPreview(mDeviceHandle);
 			} else {
 				// open出来なかった時
-				LOGE("could not open camera:err=%d", result);
+				LOGE("sencond could not open camera:err=%d", result);
 				uvc_unref_device(mDevice);
 //				SAFE_DELETE(mDevice);	// 参照カウンタが0ならuvc_unref_deviceでmDeviceがfreeされるから不要 XXX クラッシュ, 既に破棄されているのを再度破棄しようとしたからみたい
 				mDevice = NULL;
@@ -177,7 +177,7 @@ int UVCCamera::connect(int vid, int pid, int fd, int busnum, int devaddr, const 
 				close(fd);
 			}
 		} else {
-			LOGE("could not find camera:err=%d", result);
+			LOGE("frist could not find camera:err=%d", result);
 			close(fd);
 		}
 	} else {
