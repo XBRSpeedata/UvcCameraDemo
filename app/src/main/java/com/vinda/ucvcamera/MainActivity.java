@@ -3,15 +3,20 @@ package com.vinda.ucvcamera;
 import android.graphics.SurfaceTexture;
 import android.hardware.usb.UsbDevice;
 import android.os.Bundle;
+import android.os.Environment;
+import android.os.SystemClock;
 import android.support.annotation.Nullable;
 import android.util.Log;
 import android.view.Surface;
 import android.view.View;
+import android.widget.CompoundButton;
 import android.widget.ImageButton;
 import android.widget.Toast;
+import android.widget.ToggleButton;
 
 import com.serenegiant.common.BaseActivity;
 import com.serenegiant.usb.CameraDialog;
+import com.serenegiant.usb.DeviceFilter;
 import com.serenegiant.usb.USBMonitor;
 import com.serenegiant.usb.USBMonitor.OnDeviceConnectListener;
 import com.serenegiant.usb.USBMonitor.UsbControlBlock;
@@ -22,6 +27,9 @@ import com.serenegiant.widget.CameraViewInterface;
 import com.serenegiant.widget.UVCCameraTextureView;
 import com.yuan.camera.R;
 
+import java.io.File;
+import java.util.List;
+
 /**
  * 显示多路摄像头
  */
@@ -30,53 +38,207 @@ public class MainActivity extends BaseActivity implements CameraDialog.CameraDia
     private static final String TAG = "MainActivity";
 
     private static final float[] BANDWIDTH_FACTORS = {0.5f, 0.5f};
-
+    UvcCameraDataCallBack firstDataCallBack = new UvcCameraDataCallBack() {
+        @Override
+        public void getData(byte[] data) {
+            Log.v(TAG, "数据回调:" + data.length);
+        }
+    };
+    UvcCameraDataCallBack firstDataCallBack2 = new UvcCameraDataCallBack() {
+        @Override
+        public void getData(byte[] data) {
+            Log.v(TAG, "数据回调2:" + data.length);
+        }
+    };
     // for accessing USB and USB camera
     private USBMonitor mUSBMonitor;
-
     private UVCCameraHandler mHandlerFirst;
     private CameraViewInterface mUVCCameraViewFirst;
     private ImageButton mCaptureButtonFirst;
     private Surface mFirstPreviewSurface;
-
     private UVCCameraHandler mHandlerSecond;
     private CameraViewInterface mUVCCameraViewSecond;
-    private ImageButton mCaptureButtonSecond;
     private Surface mSecondPreviewSurface;
+    private List<UsbDevice> usbDeviceList;
+    private final View.OnClickListener mOnClickListener = new View.OnClickListener() {
+        @Override
+        public void onClick(final View view) {
+            switch (view.getId()) {
+                default:
+                    break;
 
-    private UVCCameraHandler mHandlerThird;
-    private CameraViewInterface mUVCCameraViewThird;
-    private ImageButton mCaptureButtonThird;
-    private Surface mThirdPreviewSurface;
+                case R.id.camera_view_first:
+                    if (mHandlerFirst != null && mHandlerSecond != null) {
+                        if (!mHandlerFirst.isOpened() && !mHandlerSecond.isOpened()) {
+                            //                CameraDialog.showDialog(MainActivity.this);
+                            mUSBMonitor.requestPermission(usbDeviceList.get(0));
+                            mUSBMonitor.requestPermission(usbDeviceList.get(1));
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    setCameraButton();
+                                }
+                            }, 0);
+                        } else {
+                            mHandlerFirst.close();
+                            mHandlerSecond.close();
+                            setCameraButton();
+                        }
+                    }
+                    break;
+                case R.id.capture_button_first:
+                    if (mHandlerFirst != null && mHandlerSecond != null) {
+                        if (mHandlerFirst.isOpened() && mHandlerSecond.isOpened()) {
+                            //检查是否有读写sd权限以及录制权限
+                            if (checkPermissionWriteExternalStorage()) {
+                                mCaptureButtonFirst.setColorFilter(0xffff0000);  // turn red
+                                //                                    mHandlerFirst.startRecording();
+                                // 拍照
+                                String picPath = Environment.getExternalStorageDirectory().getAbsolutePath()
+                                        + File.separator + System.currentTimeMillis()
+                                        + ".png";
+                                mHandlerFirst.captureStill(picPath);
+                                mHandlerSecond.captureStill(picPath);
+                            }
+                            mCaptureButtonFirst.setColorFilter(0);    // return to default color
+                            //                                mHandlerFirst.stopRecording();
+                        }
+                    }
+                    break;
+                case R.id.camera_view_second:
+                    if (mHandlerSecond != null) {
+                        if (!mHandlerSecond.isOpened()) {
+                            CameraDialog.showDialog(MainActivity.this);
+                        } else {
+                            mHandlerSecond.close();
+                            setCameraButton();
+                        }
+                    }
+                    break;
+            }
+        }
+    };
+    private final OnDeviceConnectListener mOnDeviceConnectListener = new OnDeviceConnectListener() {
+        @Override
+        public void onAttach(final UsbDevice device) {
+            Toast.makeText(MainActivity.this, "USB_DEVICE:" + device.getDeviceName(), Toast.LENGTH_SHORT).show();
+        }
 
-    private UVCCameraHandler mHandlerFourth;
-    private CameraViewInterface mUVCCameraViewFourth;
-    private ImageButton mCaptureButtonFourth;
-    private Surface mFourthPreviewSurface;
+        @Override
+        public void onConnect(final UsbDevice device, final UsbControlBlock ctrlBlock, final boolean createNew) {
+            //设备连接成功
+            Log.v(TAG, "onConnect:" + device);
+            if (!mHandlerFirst.isOpened()) {
+                Log.v(TAG, "mHandlerFirst.isOpened false" );
+                mHandlerFirst.open(ctrlBlock);
+                final SurfaceTexture st = mUVCCameraViewFirst.getSurfaceTexture();
+                mHandlerFirst.startPreview(new Surface(st));
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        mCaptureButtonFirst.setVisibility(View.VISIBLE);
+                        Log.v(TAG, "mCaptureButtonFirst VISIBLE" );
+                    }
+                });
+            } else if (!mHandlerSecond.isOpened()) {
+                mHandlerSecond.open(ctrlBlock);
+                final SurfaceTexture st = mUVCCameraViewSecond.getSurfaceTexture();
+                mHandlerSecond.startPreview(new Surface(st));
+                Log.v(TAG, "mHandlerSecond startPreview" );
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        //                        mCaptureButtonSecond.setVisibility(View.VISIBLE);
+                    }
+                });
+            }
+        }
 
-    private UVCCameraHandler mHandlerFifth;
-    private CameraViewInterface mUVCCameraViewFifth;
-    private ImageButton mCaptureButtonFifth;
-    private Surface mFifthPreviewSurface;
+        @Override
+        public void onDisconnect(final UsbDevice device, final UsbControlBlock ctrlBlock) {
+            Log.v(TAG, "onDisconnect:" + device);
+            if (ctrlBlock.getDeviceName().equals(usbDeviceList.get(0).getDeviceName())) {
+                queueEvent(new Runnable() {
+                    @Override
+                    public void run() {
+                        Log.i(TAG, "run:关闭1");
+                        mHandlerFirst.close();
+                        if (mFirstPreviewSurface != null) {
+                            mFirstPreviewSurface.release();
+                            mFirstPreviewSurface = null;
+                        }
+                        setCameraButton();
+                    }
+                }, 0);
+            } else if (ctrlBlock.getDeviceName().equals(usbDeviceList.get(1).getDeviceName())) {
+                queueEvent(new Runnable() {
+                    @Override
+                    public void run() {
+                        mHandlerSecond.close();
+                        Log.i(TAG, "run:关闭2");
+                        if (mSecondPreviewSurface != null) {
+                            mSecondPreviewSurface.release();
+                            mSecondPreviewSurface = null;
+                        }
+                        setCameraButton();
+                    }
+                }, 0);
+            }
+            //            if (!mHandlerFirst.isEqual(device)) {
+            //                queueEvent(new Runnable() {
+            //                    @Override
+            //                    public void run() {
+            //                        Log.i(TAG, "run:关闭1");
+            //                        mHandlerFirst.close();
+            //                        if (mFirstPreviewSurface != null) {
+            //                            mFirstPreviewSurface.release();
+            //                            mFirstPreviewSurface = null;
+            //                        }
+            //                        setCameraButton();
+            //                    }
+            //                }, 0);
+            //            } else if (!mHandlerSecond.isEqual(device)) {
+            //                queueEvent(new Runnable() {
+            //                    @Override
+            //                    public void run() {
+            //                        mHandlerSecond.close();
+            //                        Log.i(TAG, "run:关闭2");
+            //                        if (mSecondPreviewSurface != null) {
+            //                            mSecondPreviewSurface.release();
+            //                            mSecondPreviewSurface = null;
+            //                        }
+            //                        setCameraButton();
+            //                    }
+            //                }, 0);
+            //            }
+        }
 
+        @Override
+        public void onDettach(final UsbDevice device) {
+            Log.v(TAG, "onDettach:" + device);
+            Toast.makeText(MainActivity.this, "USB_DEVICE_DETACHED", Toast.LENGTH_SHORT).show();
+        }
 
-    private UVCCameraHandler mHandlerSixth;
-    private CameraViewInterface mUVCCameraViewSixth;
-    private ImageButton mCaptureButtonSixth;
-    private Surface mSixthPreviewSurface;
+        @Override
+        public void onCancel(final UsbDevice device) {
+            Log.v(TAG, "onCancel:");
+        }
+    };
+    private ToggleButton mBtnOpen;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_surface_view_camera);
+        initView();
         findViewById(R.id.RelativeLayout1).setOnClickListener(mOnClickListener);
         mUSBMonitor = new USBMonitor(this, mOnDeviceConnectListener);
         resultFirstCamera();
         resultSecondCamera();
-        resultThirdCamera();
-        resultFourthCamera();
-        resultFifThCamrea();
-        resultSixthCamera();
+        final List<DeviceFilter> filter = DeviceFilter.getDeviceFilters(this, R.xml.device_filter);
+        usbDeviceList = mUSBMonitor.getDeviceList(filter.get(0));
+
+
     }
 
     /**
@@ -95,112 +257,37 @@ public class MainActivity extends BaseActivity implements CameraDialog.CameraDia
                 , BANDWIDTH_FACTORS[0], firstDataCallBack);
     }
 
-    UvcCameraDataCallBack firstDataCallBack = new UvcCameraDataCallBack() {
-        @Override
-        public void getData(byte[] data) {
-            if (DEBUG) Log.v(TAG, "数据回调:" + data.length);
-        }
-    };
-
     private void resultSecondCamera() {
         mUVCCameraViewSecond = (CameraViewInterface) findViewById(R.id.camera_view_second);
         mUVCCameraViewSecond.setAspectRatio(UVCCamera.DEFAULT_PREVIEW_WIDTH / (float) UVCCamera.DEFAULT_PREVIEW_HEIGHT);
         ((UVCCameraTextureView) mUVCCameraViewSecond).setOnClickListener(mOnClickListener);
-        mCaptureButtonSecond = (ImageButton) findViewById(R.id.capture_button_second);
-        mCaptureButtonSecond.setOnClickListener(mOnClickListener);
-        mCaptureButtonSecond.setVisibility(View.INVISIBLE);
         mHandlerSecond = UVCCameraHandler.createHandler(this, mUVCCameraViewSecond, UVCCamera.DEFAULT_PREVIEW_WIDTH, UVCCamera.DEFAULT_PREVIEW_HEIGHT, BANDWIDTH_FACTORS[1]);
-    }
-
-    private void resultThirdCamera() {
-        mUVCCameraViewThird = (CameraViewInterface) findViewById(R.id.camera_view_third);
-        mUVCCameraViewThird.setAspectRatio(UVCCamera.DEFAULT_PREVIEW_WIDTH / (float) UVCCamera.DEFAULT_PREVIEW_HEIGHT);
-        ((UVCCameraTextureView) mUVCCameraViewThird).setOnClickListener(mOnClickListener);
-        mCaptureButtonThird = (ImageButton) findViewById(R.id.capture_button_third);
-        mCaptureButtonThird.setOnClickListener(mOnClickListener);
-        mCaptureButtonThird.setVisibility(View.INVISIBLE);
-        mHandlerThird = UVCCameraHandler.createHandler(this, mUVCCameraViewThird, UVCCamera.DEFAULT_PREVIEW_WIDTH, UVCCamera.DEFAULT_PREVIEW_HEIGHT, BANDWIDTH_FACTORS[1]);
-    }
-
-    private void resultFourthCamera() {
-        mUVCCameraViewFourth = (CameraViewInterface) findViewById(R.id.camera_view_fourth);
-        mUVCCameraViewFourth.setAspectRatio(UVCCamera.DEFAULT_PREVIEW_WIDTH / (float) UVCCamera.DEFAULT_PREVIEW_HEIGHT);
-        ((UVCCameraTextureView) mUVCCameraViewFourth).setOnClickListener(mOnClickListener);
-        mCaptureButtonFourth = (ImageButton) findViewById(R.id.capture_button_fourth);
-        mCaptureButtonFourth.setOnClickListener(mOnClickListener);
-        mCaptureButtonFourth.setVisibility(View.INVISIBLE);
-        mHandlerFourth = UVCCameraHandler.createHandler(this, mUVCCameraViewFourth, UVCCamera.DEFAULT_PREVIEW_WIDTH, UVCCamera.DEFAULT_PREVIEW_HEIGHT, BANDWIDTH_FACTORS[1]);
-    }
-
-    private void resultFifThCamrea() {
-        mUVCCameraViewFifth = (CameraViewInterface) findViewById(R.id.camera_view_fifth);
-        mUVCCameraViewFifth.setAspectRatio(UVCCamera.DEFAULT_PREVIEW_WIDTH / (float) UVCCamera.DEFAULT_PREVIEW_HEIGHT);
-        ((UVCCameraTextureView) mUVCCameraViewFifth).setOnClickListener(mOnClickListener);
-        mCaptureButtonFifth = (ImageButton) findViewById(R.id.capture_button_fifth);
-        mCaptureButtonFifth.setOnClickListener(mOnClickListener);
-        mCaptureButtonFifth.setVisibility(View.INVISIBLE);
-        mHandlerFifth = UVCCameraHandler.createHandler(this, mUVCCameraViewFifth, UVCCamera.DEFAULT_PREVIEW_WIDTH, UVCCamera.DEFAULT_PREVIEW_HEIGHT, BANDWIDTH_FACTORS[1]);
-    }
-
-    private void resultSixthCamera() {
-        mUVCCameraViewSixth = (CameraViewInterface) findViewById(R.id.camera_view_sixth);
-        mUVCCameraViewSixth.setAspectRatio(UVCCamera.DEFAULT_PREVIEW_WIDTH / (float) UVCCamera.DEFAULT_PREVIEW_HEIGHT);
-        ((UVCCameraTextureView) mUVCCameraViewSixth).setOnClickListener(mOnClickListener);
-        mCaptureButtonSixth = (ImageButton) findViewById(R.id.capture_button_sixth);
-        mCaptureButtonSixth.setOnClickListener(mOnClickListener);
-        mCaptureButtonSixth.setVisibility(View.INVISIBLE);
-        mHandlerSixth = UVCCameraHandler.createHandler(this, mUVCCameraViewSixth, UVCCamera.DEFAULT_PREVIEW_WIDTH, UVCCamera.DEFAULT_PREVIEW_HEIGHT, BANDWIDTH_FACTORS[1]);
     }
 
     @Override
     protected void onStart() {
         super.onStart();
         mUSBMonitor.register();
-        if (mUVCCameraViewSecond != null)
+        if (mUVCCameraViewSecond != null) {
             mUVCCameraViewSecond.onResume();
-        if (mUVCCameraViewFirst != null)
+        }
+        if (mUVCCameraViewFirst != null) {
             mUVCCameraViewFirst.onResume();
-        if (mUVCCameraViewThird != null)
-            mUVCCameraViewThird.onResume();
-        if (mUVCCameraViewFourth != null)
-            mUVCCameraViewFourth.onResume();
-        if (mUVCCameraViewFifth != null)
-            mUVCCameraViewFifth.onResume();
-        if (mUVCCameraViewSixth != null)
-            mUVCCameraViewSixth.onResume();
+        }
     }
 
     @Override
     protected void onStop() {
         mHandlerFirst.close();
-        if (mUVCCameraViewFirst != null)
+        if (mUVCCameraViewFirst != null) {
             mUVCCameraViewFirst.onPause();
+        }
         mCaptureButtonFirst.setVisibility(View.INVISIBLE);
 
         mHandlerSecond.close();
-        if (mUVCCameraViewSecond != null)
+        if (mUVCCameraViewSecond != null) {
             mUVCCameraViewSecond.onPause();
-        mCaptureButtonSecond.setVisibility(View.INVISIBLE);
-
-        mHandlerThird.close();
-        if (mUVCCameraViewThird != null)
-            mUVCCameraViewThird.onPause();
-        mCaptureButtonThird.setVisibility(View.INVISIBLE);
-
-        mHandlerFourth.close();
-        if (mUVCCameraViewFourth != null)
-            mUVCCameraViewFourth.onPause();
-        mCaptureButtonFourth.setVisibility(View.INVISIBLE);
-
-        mHandlerFifth.close();
-        if (mUVCCameraViewFifth != null)
-            mUVCCameraViewFifth.onPause();
-        mCaptureButtonFifth.setVisibility(View.INVISIBLE);
-
-        mHandlerSixth.close();
-        if (mUVCCameraViewSixth != null)
-            mUVCCameraViewSixth.onPause();
-        mCaptureButtonSixth.setVisibility(View.INVISIBLE);
+        }
 
         mUSBMonitor.unregister();//usb管理器解绑
         super.onStop();
@@ -211,376 +298,19 @@ public class MainActivity extends BaseActivity implements CameraDialog.CameraDia
         if (mHandlerFirst != null) {
             mHandlerFirst = null;
         }
-
         if (mHandlerSecond != null) {
             mHandlerSecond = null;
         }
-
-        if (mHandlerThird != null) {
-            mHandlerThird = null;
-        }
-
-        if (mHandlerFourth != null) {
-            mHandlerFourth = null;
-        }
-
-        if (mHandlerFifth != null) {
-            mHandlerFifth = null;
-        }
-
-        if (mHandlerSixth != null) {
-            mHandlerSixth = null;
-        }
-
         if (mUSBMonitor != null) {
             mUSBMonitor.destroy();
             mUSBMonitor = null;
         }
-
         mUVCCameraViewFirst = null;
         mCaptureButtonFirst = null;
 
         mUVCCameraViewSecond = null;
-        mCaptureButtonSecond = null;
-
-        mUVCCameraViewThird = null;
-        mCaptureButtonThird = null;
-
-        mUVCCameraViewFourth = null;
-        mCaptureButtonFourth = null;
-
-        mUVCCameraViewFifth = null;
-        mCaptureButtonFifth = null;
-
-        mUVCCameraViewSixth = null;
-        mCaptureButtonSixth = null;
         super.onDestroy();
     }
-
-    private final View.OnClickListener mOnClickListener = new View.OnClickListener() {
-        @Override
-        public void onClick(final View view) {
-            switch (view.getId()) {
-                case R.id.camera_view_first:
-                    if (mHandlerFirst != null) {
-                        if (!mHandlerFirst.isOpened()) {
-                            CameraDialog.showDialog(MainActivity.this);
-                        } else {
-                            mHandlerFirst.close();
-                            setCameraButton();
-                        }
-                    }
-                    break;
-                case R.id.capture_button_first:
-                    if (mHandlerFirst != null) {
-                        if (mHandlerFirst.isOpened()) {
-                            if (checkPermissionWriteExternalStorage() && checkPermissionAudio()) {
-                                if (!mHandlerFirst.isRecording()) {
-                                    mCaptureButtonFirst.setColorFilter(0xffff0000);    // turn red
-                                    mHandlerFirst.startRecording();
-                                } else {
-                                    mCaptureButtonFirst.setColorFilter(0);    // return to default color
-                                    mHandlerFirst.stopRecording();
-                                }
-                            }
-                        }
-                    }
-                    break;
-                case R.id.camera_view_second:
-                    if (mHandlerSecond != null) {
-                        if (!mHandlerSecond.isOpened()) {
-                            CameraDialog.showDialog(MainActivity.this);
-                        } else {
-                            mHandlerSecond.close();
-                            setCameraButton();
-                        }
-                    }
-                    break;
-                case R.id.capture_button_second:
-                    if (mHandlerSecond != null) {
-                        if (mHandlerSecond.isOpened()) {
-                            if (checkPermissionWriteExternalStorage() && checkPermissionAudio()) {
-                                if (!mHandlerSecond.isRecording()) {
-                                    mCaptureButtonSecond.setColorFilter(0xffff0000);    // turn red
-                                    mHandlerSecond.startRecording();
-                                } else {
-                                    mCaptureButtonSecond.setColorFilter(0);    // return to default color
-                                    mHandlerSecond.stopRecording();
-                                }
-                            }
-                        }
-                    }
-                    break;
-                case R.id.camera_view_third:
-                    if (mHandlerThird != null) {
-                        if (!mHandlerThird.isOpened()) {
-                            CameraDialog.showDialog(MainActivity.this);
-                        } else {
-                            mHandlerThird.close();
-                            setCameraButton();
-                        }
-                    }
-                    break;
-                case R.id.capture_button_third:
-                    if (mHandlerThird != null) {
-                        if (mHandlerThird.isOpened()) {
-                            if (checkPermissionWriteExternalStorage() && checkPermissionAudio()) {
-                                if (!mHandlerThird.isRecording()) {
-                                    mCaptureButtonThird.setColorFilter(0xffff0000);    // turn red
-                                    mHandlerThird.startRecording();
-                                } else {
-                                    mCaptureButtonThird.setColorFilter(0);    // return to default color
-                                    mHandlerThird.stopRecording();
-                                }
-                            }
-                        }
-                    }
-                    break;
-                case R.id.camera_view_fourth:
-                    if (mHandlerFourth != null) {
-                        if (!mHandlerFourth.isOpened()) {
-                            CameraDialog.showDialog(MainActivity.this);
-                        } else {
-                            mHandlerFourth.close();
-                            setCameraButton();
-                        }
-                    }
-                    break;
-                case R.id.capture_button_fourth:
-                    if (mHandlerFourth != null) {
-                        if (mHandlerFourth.isOpened()) {
-                            if (checkPermissionWriteExternalStorage() && checkPermissionAudio()) {
-                                if (!mHandlerFourth.isRecording()) {
-                                    mCaptureButtonFourth.setColorFilter(0xffff0000);    // turn red
-                                    mHandlerFourth.startRecording();
-                                } else {
-                                    mCaptureButtonFourth.setColorFilter(0);    // return to default color
-                                    mHandlerFourth.stopRecording();
-                                }
-                            }
-                        }
-                    }
-                    break;
-
-                case R.id.camera_view_fifth:
-                    if (mHandlerFifth != null) {
-                        if (!mHandlerFifth.isOpened()) {
-                            CameraDialog.showDialog(MainActivity.this);
-                        } else {
-                            mHandlerFifth.close();
-                            setCameraButton();
-                        }
-                    }
-                    break;
-                case R.id.capture_button_fifth:
-                    if (mHandlerFifth != null) {
-                        if (mHandlerFifth.isOpened()) {
-                            if (checkPermissionWriteExternalStorage() && checkPermissionAudio()) {
-                                if (!mHandlerFifth.isRecording()) {
-                                    mCaptureButtonFifth.setColorFilter(0xffff0000);    // turn red
-                                    mHandlerFifth.startRecording();
-                                } else {
-                                    mCaptureButtonFifth.setColorFilter(0);    // return to default color
-                                    mHandlerFifth.stopRecording();
-                                }
-                            }
-                        }
-                    }
-                    break;
-
-                case R.id.camera_view_sixth:
-                    if (mHandlerSixth != null) {
-                        if (!mHandlerSixth.isOpened()) {
-                            CameraDialog.showDialog(MainActivity.this);
-                        } else {
-                            mHandlerSixth.close();
-                            setCameraButton();
-                        }
-                    }
-                    break;
-                case R.id.capture_button_sixth:
-                    if (mHandlerSixth != null) {
-                        if (mHandlerSixth.isOpened()) {
-                            if (checkPermissionWriteExternalStorage() && checkPermissionAudio()) {
-                                if (!mHandlerSixth.isRecording()) {
-                                    mCaptureButtonSixth.setColorFilter(0xffff0000);    // turn red
-                                    mHandlerSixth.startRecording();
-                                } else {
-                                    mCaptureButtonSixth.setColorFilter(0);    // return to default color
-                                    mHandlerSixth.stopRecording();
-                                }
-                            }
-                        }
-                    }
-                    break;
-            }
-        }
-    };
-
-    private final OnDeviceConnectListener mOnDeviceConnectListener = new OnDeviceConnectListener() {
-        @Override
-        public void onAttach(final UsbDevice device) {
-            if (DEBUG) Log.v(TAG, "onAttach:" + device);
-            Toast.makeText(MainActivity.this, "USB_DEVICE_ATTACHED", Toast.LENGTH_SHORT).show();
-        }
-
-        @Override
-        public void onConnect(final UsbDevice device, final UsbControlBlock ctrlBlock, final boolean createNew) {
-            //设备连接成功
-            if (DEBUG) Log.v(TAG, "onConnect:" + device);
-            if (!mHandlerFirst.isOpened()) {
-                mHandlerFirst.open(ctrlBlock);
-                final SurfaceTexture st = mUVCCameraViewFirst.getSurfaceTexture();
-                mHandlerFirst.startPreview(new Surface(st));
-
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        mCaptureButtonFirst.setVisibility(View.VISIBLE);
-                    }
-                });
-            } else if (!mHandlerSecond.isOpened()) {
-                mHandlerSecond.open(ctrlBlock);
-                final SurfaceTexture st = mUVCCameraViewSecond.getSurfaceTexture();
-                mHandlerSecond.startPreview(new Surface(st));
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        mCaptureButtonSecond.setVisibility(View.VISIBLE);
-                    }
-                });
-            } else if (!mHandlerThird.isOpened()) {
-                mHandlerThird.open(ctrlBlock);
-                final SurfaceTexture st = mUVCCameraViewThird.getSurfaceTexture();
-                mHandlerThird.startPreview(new Surface(st));
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        mCaptureButtonThird.setVisibility(View.VISIBLE);
-                    }
-                });
-            } else if (!mHandlerFourth.isOpened()) {
-                mHandlerFourth.open(ctrlBlock);
-                final SurfaceTexture st = mUVCCameraViewFourth.getSurfaceTexture();
-                mHandlerFourth.startPreview(new Surface(st));
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        mCaptureButtonFourth.setVisibility(View.VISIBLE);
-                    }
-                });
-            } else if (!mHandlerFifth.isOpened()) {
-                mHandlerFifth.open(ctrlBlock);
-                final SurfaceTexture st = mUVCCameraViewFifth.getSurfaceTexture();
-                mHandlerFifth.startPreview(new Surface(st));
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        mCaptureButtonFifth.setVisibility(View.VISIBLE);
-                    }
-                });
-            } else if (!mHandlerSixth.isOpened()) {
-                mHandlerSixth.open(ctrlBlock);
-                final SurfaceTexture st = mUVCCameraViewSixth.getSurfaceTexture();
-                mHandlerSixth.startPreview(new Surface(st));
-                runOnUiThread(new Runnable() {
-                    @Override
-                    public void run() {
-                        mCaptureButtonSixth.setVisibility(View.VISIBLE);
-                    }
-                });
-            }
-        }
-
-        @Override
-        public void onDisconnect(final UsbDevice device, final UsbControlBlock ctrlBlock) {
-            if (DEBUG) Log.v(TAG, "onDisconnect:" + device);
-            if ((mHandlerFirst != null) && !mHandlerFirst.isEqual(device)) {
-                queueEvent(new Runnable() {
-                    @Override
-                    public void run() {
-                        mHandlerFirst.close();
-                        if (mFirstPreviewSurface != null) {
-                            mFirstPreviewSurface.release();
-                            mFirstPreviewSurface = null;
-                        }
-                        setCameraButton();
-                    }
-                }, 0);
-            } else if ((mHandlerSecond != null) && !mHandlerSecond.isEqual(device)) {
-                queueEvent(new Runnable() {
-                    @Override
-                    public void run() {
-                        mHandlerSecond.close();
-                        if (mSecondPreviewSurface != null) {
-                            mSecondPreviewSurface.release();
-                            mSecondPreviewSurface = null;
-                        }
-                        setCameraButton();
-                    }
-                }, 0);
-            } else if ((mHandlerThird != null) && !mHandlerThird.isEqual(device)) {
-                queueEvent(new Runnable() {
-                    @Override
-                    public void run() {
-                        mHandlerThird.close();
-                        if (mThirdPreviewSurface != null) {
-                            mThirdPreviewSurface.release();
-                            mThirdPreviewSurface = null;
-                        }
-                        setCameraButton();
-                    }
-                }, 0);
-            } else if ((mHandlerFourth != null) && !mHandlerFourth.isEqual(device)) {
-                queueEvent(new Runnable() {
-                    @Override
-                    public void run() {
-                        mHandlerFourth.close();
-                        if (mFourthPreviewSurface != null) {
-                            mFourthPreviewSurface.release();
-                            mFourthPreviewSurface = null;
-                        }
-                        setCameraButton();
-                    }
-                }, 0);
-            } else if ((mHandlerFifth != null) && !mHandlerFifth.isEqual(device)) {
-                queueEvent(new Runnable() {
-                    @Override
-                    public void run() {
-                        mHandlerFifth.close();
-                        if (mFifthPreviewSurface != null) {
-                            mFifthPreviewSurface.release();
-                            mFifthPreviewSurface = null;
-                        }
-                        setCameraButton();
-                    }
-                }, 0);
-            } else if ((mHandlerSixth != null) && !mHandlerSixth.isEqual(device)) {
-                queueEvent(new Runnable() {
-                    @Override
-                    public void run() {
-                        mHandlerSixth.close();
-                        if (mSixthPreviewSurface != null) {
-                            mSixthPreviewSurface.release();
-                            mSixthPreviewSurface = null;
-                        }
-                        setCameraButton();
-                    }
-                }, 0);
-            }
-        }
-
-        @Override
-        public void onDettach(final UsbDevice device) {
-            if (DEBUG) Log.v(TAG, "onDettach:" + device);
-            Toast.makeText(MainActivity.this, "USB_DEVICE_DETACHED", Toast.LENGTH_SHORT).show();
-        }
-
-        @Override
-        public void onCancel(final UsbDevice device) {
-            if (DEBUG) Log.v(TAG, "onCancel:");
-        }
-    };
 
     /**
      * to access from CameraDialog
@@ -608,25 +338,48 @@ public class MainActivity extends BaseActivity implements CameraDialog.CameraDia
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                if ((mHandlerFirst != null) && !mHandlerFirst.isOpened() && (mCaptureButtonFirst != null)) {
+                if ((mHandlerFirst != null) && !mHandlerFirst.isOpened() && (mCaptureButtonFirst != null) && (mHandlerSecond != null) && !mHandlerSecond.isOpened()) {
                     mCaptureButtonFirst.setVisibility(View.INVISIBLE);
                 }
-                if ((mHandlerSecond != null) && !mHandlerSecond.isOpened() && (mCaptureButtonSecond != null)) {
-                    mCaptureButtonSecond.setVisibility(View.INVISIBLE);
-                }
-                if ((mHandlerThird != null) && !mHandlerThird.isOpened() && (mCaptureButtonThird != null)) {
-                    mCaptureButtonThird.setVisibility(View.INVISIBLE);
-                }
-                if ((mHandlerFourth != null) && !mHandlerFourth.isOpened() && (mCaptureButtonFourth != null)) {
-                    mCaptureButtonFourth.setVisibility(View.INVISIBLE);
-                }
-                if ((mHandlerFifth != null) && !mHandlerFifth.isOpened() && (mCaptureButtonFifth != null)) {
-                    mCaptureButtonFifth.setVisibility(View.INVISIBLE);
-                }
-                if ((mHandlerSixth != null) && !mHandlerSixth.isOpened() && (mCaptureButtonSixth != null)) {
-                    mCaptureButtonSixth.setVisibility(View.INVISIBLE);
-                }
+                //                if ((mHandlerSecond != null) && !mHandlerSecond.isOpened() && (mCaptureButtonSecond != null)) {
+                //                    mCaptureButtonSecond.setVisibility(View.INVISIBLE);
+                //                }
             }
         }, 0);
     }
+
+    private void initView() {
+        mBtnOpen = (ToggleButton) findViewById(R.id.btn_open);
+        mBtnOpen.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                if (mHandlerFirst != null && mHandlerSecond != null) {
+                    if (!mHandlerFirst.isOpened() && !mHandlerSecond.isOpened()) {
+                        Log.i(TAG, "onCheckedChanged:  关闭状态");
+                        //                CameraDialog.showDialog(MainActivity.this);
+                        mUSBMonitor.requestPermission(usbDeviceList.get(0));
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                setCameraButton();
+                            }
+                        }, 0);
+                        SystemClock.sleep(100);
+                        mUSBMonitor.requestPermission(usbDeviceList.get(1));
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                setCameraButton();
+                            }
+                        }, 0);
+                    } else {
+                        mHandlerFirst.close();
+                        mHandlerSecond.close();
+                        setCameraButton();
+                    }
+                }
+            }
+        });
+    }
+
 }
